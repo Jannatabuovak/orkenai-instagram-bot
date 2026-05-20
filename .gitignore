@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Environment variables (НИКОГДА не коммить!)
+.env
+.env.local
+.env.production
+
+# Vercel
+.vercel/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

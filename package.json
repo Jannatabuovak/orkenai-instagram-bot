@@ -1,0 +1,13 @@
+{
+  "name": "orkenai-instagram-bot",
+  "version": "1.0.0",
+  "description": "OrkenAI Instagram DM Webhook Bot — отслеживание клиентов из Instagram Direct",
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "keywords": ["instagram", "webhook", "meta", "dm", "crm", "orkenai"],
+  "author": "OrkenAI",
+  "license": "MIT"
+}

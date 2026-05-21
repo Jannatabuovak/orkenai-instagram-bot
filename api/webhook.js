@@ -1,5 +1,10 @@
+import { normalizeLead } from "../lib/tracking.js";
+import { pushToNotion } from "../lib/notion.js";
+
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const IG_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN;
+const NOTION_TOKEN = process.env.NOTION_TOKEN;
+const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID;
 
 export default async function handler(req, res) {
 
@@ -41,27 +46,57 @@ export default async function handler(req, res) {
             const messageType = hasMedia ? 'media' : 'text';
             const time        = new Date(timestamp * 1000).toISOString();
 
+            // ==============================
+            //  TRACKING — определяем источник
+            // ==============================
+            let ref = null;
+
+            // Проверяем referral (клик по ссылке ig.me/m/...?ref=)
+            if (event.referral && event.referral.ref) {
+              ref = event.referral.ref;
+            }
+            // Проверяем postback referral
+            if (event.postback && event.postback.referral && event.postback.referral.ref) {
+              ref = event.postback.referral.ref;
+            }
+
+            // Формируем лид
+            const lead = normalizeLead({
+              senderId:    senderId,
+              username:    "",
+              name:        "",
+              messageText: text || '[медиа-файл]',
+              ref:         ref,
+              raw:         event
+            });
+
             // Логируем лид
             console.log('📋 ===== НОВЫЙ ЛИД =====');
             console.log(JSON.stringify({
-              source:    'Instagram DM',
-              senderId:  senderId,
-              message:   text || '[медиа-файл]',
+              source:    lead.source,
+              senderId:  lead.senderId,
+              message:   lead.messageText,
               type:      messageType,
+              eventId:   lead.eventId,
               timestamp: time
             }, null, 2));
+
+            // ==============================
+            //  NOTION — сохраняем лид
+            // ==============================
+            pushToNotion(lead, NOTION_TOKEN, NOTION_DATABASE_ID)
+              .then((result) => {
+                console.log('✅ Notion saved:', JSON.stringify(result));
+              })
+              .catch((err) => {
+                console.error('❌ Notion error:', err.message);
+              });
 
             // Автоответ
             await sendReply(
               senderId,
               'Здравствуйте! Спасибо за обращение 🙏\nМенеджер свяжется с вами в ближайшее время.'
             );
-
-            // TODO: Отправить лид в CRM (amoCRM / Bitrix24)
-            // await sendToCRM(senderId, text, time);
-
-            // TODO: Отправить в Google Sheets
-            // await sendToGoogleSheets(senderId, text, time);
           }
 
           // --- Реакция на сообщение ---
@@ -113,23 +148,3 @@ async function sendReply(recipientId, text) {
     console.error('❌ Network Error:', err.message);
   }
 }
-
-
-// ==========================================
-//  TODO: Интеграция с CRM
-// ==========================================
-// async function sendToCRM(senderId, message, timestamp) {
-//   // amoCRM пример:
-//   // POST https://your-domain.amocrm.ru/api/v4/leads
-//   // Body: { name: "Лид из Instagram", ... }
-// }
-
-
-// ==========================================
-//  TODO: Интеграция с Google Sheets
-// ==========================================
-// async function sendToGoogleSheets(senderId, message, timestamp) {
-//   // Google Apps Script Web App URL
-//   // POST https://script.google.com/macros/s/xxx/exec
-//   // Body: { senderId, message, timestamp, source: "Instagram" }
-// }

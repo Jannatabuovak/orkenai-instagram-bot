@@ -1,13 +1,24 @@
 import { normalizeLead } from "../lib/tracking.js";
-import { pushToNotion } from "../lib/notion.js";
-import { sendLeadEvent } from "../lib/capi.js";
+import { pushToNotion }   from "../lib/notion.js";
+import { sendLeadEvent }  from "../lib/capi.js";
+import { pushToAmoCRM }   from "../lib/amocrm.js";
 
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-const IG_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN;
-const NOTION_TOKEN = process.env.NOTION_TOKEN;
+// ==========================================
+//  Переменные окружения (Environment Variables)
+// ==========================================
+const VERIFY_TOKEN      = process.env.VERIFY_TOKEN;
+const IG_TOKEN          = process.env.INSTAGRAM_ACCESS_TOKEN;
+const NOTION_TOKEN      = process.env.NOTION_TOKEN;
 const NOTION_DATABASE_ID = process.env.NOTION_DATABASE_ID;
-const PIXEL_ID = process.env.PIXEL_ID;
+const PIXEL_ID          = process.env.PIXEL_ID;
 const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+
+// amoCRM
+const AMO_SUBDOMAIN     = process.env.AMO_SUBDOMAIN;
+const AMO_ACCESS_TOKEN  = process.env.AMO_ACCESS_TOKEN;
+const AMO_PIPELINE_ID   = process.env.AMO_PIPELINE_ID;
+const AMO_STATUS_ID     = process.env.AMO_STATUS_ID;
+
 
 export default async function handler(req, res) {
 
@@ -93,12 +104,28 @@ export default async function handler(req, res) {
               });
 
             // ==============================
+            //  AMOCRM — создаём сделку + контакт
+            // ==============================
+            pushToAmoCRM(lead, {
+              subdomain:   AMO_SUBDOMAIN,
+              accessToken: AMO_ACCESS_TOKEN,
+              pipelineId:  AMO_PIPELINE_ID,
+              statusId:    AMO_STATUS_ID
+            })
+              .then((result) => {
+                console.log('✅ amoCRM saved:', JSON.stringify(result));
+              })
+              .catch((err) => {
+                console.error('❌ amoCRM error:', err.message);
+              });
+
+            // ==============================
             //  META CAPI — отправляем событие
             // ==============================
             sendLeadEvent({
-              pixelId: PIXEL_ID,
+              pixelId:     PIXEL_ID,
               accessToken: META_ACCESS_TOKEN,
-              lead: lead,
+              lead:        lead,
               ip: req.headers["x-forwarded-for"]
                 ? req.headers["x-forwarded-for"].split(",")[0]
                 : "",

@@ -1,9 +1,73 @@
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const IG_TOKEN     = process.env.INSTAGRAM_ACCESS_TOKEN;
 const AMO_TOKEN    = process.env.AMO_ACCESS_TOKEN;
-
 const AMO_BASE_URL = "https://jannatabuova.amocrm.ru";
 
+// ==========================================
+//  Сессии пользователей (in-memory)
+// ==========================================
+const sessions = new Map();
+const SESSION_TTL = 24 * 60 * 60 * 1000; // 24 часа
+
+function getSession(senderId) {
+  const s = sessions.get(senderId);
+  if (s && Date.now() - s.startedAt > SESSION_TTL) {
+    sessions.delete(senderId);
+    return null;
+  }
+  return s || null;
+}
+
+// ==========================================
+//  Языковые конфигурации
+// ==========================================
+const LANGUAGES = {
+  '1': {
+    code: 'kz',
+    name: 'Қазақша 🇰🇿',
+    greeting: 'Сәлеметсіз бе! 👋 Алдар Көсе туралы видеомызды көргеніңізге қуаныштымыз! Сіз дұрыс жерге келдіңіз 😊',
+    question: 'Сізге қалай көмектесе аламыз? Төменде жазыңыз 👇'
+  },
+  '2': {
+    code: 'ru',
+    name: 'Русский 🇷🇺',
+    greeting: 'Здравствуйте! 👋 Рады, что вы нашли нас через видео про Алдар Косе! Вы обратились по адресу 😊',
+    question: 'Чем можем вам помочь? Напишите ниже 👇'
+  },
+  '3': {
+    code: 'en',
+    name: 'English 🇬🇧',
+    greeting: "Hello! 👋 Great that you found us through our Aldar Kose video! You're in the right place 😊",
+    question: 'How can we help you? Let us know below 👇'
+  },
+  '4': {
+    code: 'uz',
+    name: "O'zbekcha 🇺🇿",
+    greeting: "Assalomu alaykum! 👋 Aldar Ko'sa haqidagi videomizni ko'rganingizdan xursandmiz! To'g'ri joyga keldingiz 😊",
+    question: "Sizga qanday yordam bera olamiz? Pastga yozing 👇"
+  },
+  '5': {
+    code: 'kg',
+    name: 'Кыргызча 🇰🇬',
+    greeting: 'Саламатсызбы! 👋 Алдар Көсө жөнүндө видеобузду көргөнүңүзгө кубанычтабыз! Туура жерге келдиңиз 😊',
+    question: 'Сизге кандай жардам бере алабыз? Төмөнгө жазыңыз 👇'
+  }
+};
+
+const MENU_TEXT = `Сәлеметсіз бе! 👋 Тілді таңдаңыз:
+Выберите язык / Choose language:
+
+1️⃣ Қазақша 🇰🇿
+2️⃣ Русский 🇷🇺
+3️⃣ English 🇬🇧
+4️⃣ O'zbekcha 🇺🇿
+5️⃣ Кыргызча 🇰🇬
+
+👆 Жіберіңіз цифрды / Отправьте цифру / Send a number`;
+
+// ==========================================
+//  MAIN HANDLER
+// ==========================================
 export default async function handler(req, res) {
 
   // ========================
@@ -13,12 +77,10 @@ export default async function handler(req, res) {
     const mode      = req.query['hub.mode'];
     const token     = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-      console.log('\u2705 Webhook verified successfully');
+      console.log('✅ Webhook verified');
       return res.status(200).send(challenge);
     }
-    console.warn('\u26a0\ufe0f Verification failed \u2014 token mismatch');
     return res.status(403).send('Forbidden');
   }
 
@@ -38,38 +100,88 @@ export default async function handler(req, res) {
 
           // --- Входящее сообщение ---
           if (event.message && !event.message.is_echo) {
-            const text = event.message.text || '';
+            const text = (event.message.text || '').trim();
             const time = new Date(timestamp * 1000).toISOString();
 
-            console.log('\ud83d\udce9 ===== НОВОЕ СООБЩЕНИЕ =====');
+            console.log('📩 ===== НОВОЕ СООБЩЕНИЕ =====');
             console.log(JSON.stringify({
               senderId,
               message: text || '[медиа-файл]',
               timestamp: time
             }, null, 2));
 
-            // ==============================
-            //  1. Автоответ в Instagram DM
-            // ==============================
-            await sendReply(
-              senderId,
-              'С\u0441\u04d9леметсіз бе! \ud83d\udc4b OrkenAI-ға хош келдіңіз!\n\nБіз AI-шешімдер жасаймыз: чат-боттар, автоматтандыру, вебсайттар, AI-контент.\n\n---\n\nЗдравствуйте! \ud83d\udc4b Добро пожаловать в OrkenAI!\n\nМы создаём AI-решения для бизнеса:\n\ud83e\udd16 Чат-боты (WhatsApp, Instagram, Telegram)\n\ud83c\udf10 Сайты и автоматизация\n\ud83c\udfa8 AI-контент: изображения, видео, дизайн\n\nМенеджер ответит вам в ближайшее время \ud83d\ude80'
-            );
+            const session = getSession(senderId);
 
-            // ==============================
-            //  2. Создание сделки в amoCRM
-            // ==============================
-            await createAmoDeal(senderId, text || '[медиа-файл]', time);
+            // ─────────────────────────────────
+            //  ШАГ 1: Новый пользователь → Меню языков
+            // ─────────────────────────────────
+            if (!session) {
+              sessions.set(senderId, {
+                step: 'awaiting_language',
+                startedAt: Date.now()
+              });
+
+              await sendReply(senderId, MENU_TEXT);
+
+              // Создаём сделку в amoCRM сразу при первом обращении
+              await createAmoDeal(senderId, text || '[первое обращение]', time);
+            }
+
+            // ─────────────────────────────────
+            //  ШАГ 2: Ожидаем выбор языка
+            // ─────────────────────────────────
+            else if (session.step === 'awaiting_language') {
+              const lang = LANGUAGES[text];
+
+              if (lang) {
+                // Язык выбран — сохраняем и приветствуем
+                sessions.set(senderId, {
+                  step: 'active',
+                  lang: lang.code,
+                  langName: lang.name,
+                  startedAt: session.startedAt
+                });
+
+                const reply = `${lang.greeting}\n\n${lang.question}`;
+                await sendReply(senderId, reply);
+              } else {
+                // Неверный ввод — показываем меню ещё раз
+                await sendReply(
+                  senderId,
+                  `⚠️ Тілді таңдаңыз (1-5):\nВыберите язык (1-5):\n\n${MENU_TEXT}`
+                );
+              }
+            }
+
+            // ─────────────────────────────────
+            //  ШАГ 3: Активная сессия — пересылаем в amoCRM
+            // ─────────────────────────────────
+            else if (session.step === 'active') {
+              // Подтверждение клиенту
+              const confirmations = {
+                kz: '✅ Рахмет! Хабарламаңыз қабылданды. Менеджер жақын арада жауап береді 🙏',
+                ru: '✅ Спасибо! Ваше сообщение принято. Менеджер ответит вам в ближайшее время 🙏',
+                en: '✅ Thank you! Your message has been received. Our manager will reply shortly 🙏',
+                uz: "✅ Rahmat! Xabaringiz qabul qilindi. Menejer tez orada javob beradi 🙏",
+                kg: '✅ Рахмат! Кабарыңыз кабыл алынды. Менеджер жакында жооп берет 🙏'
+              };
+
+              const msg = confirmations[session.lang] || confirmations['ru'];
+              await sendReply(senderId, msg);
+
+              // Добавляем в amoCRM как примечание
+              await createAmoDeal(senderId, `[${session.langName}] ${text || '[медиа-файл]'}`, time);
+            }
           }
 
           // --- Реакция ---
           if (event.reaction) {
-            console.log(`\ud83d\udc4d Reaction from ${senderId}: ${event.reaction.reaction}`);
+            console.log(`👍 Reaction from ${senderId}: ${event.reaction.reaction}`);
           }
 
           // --- Прочитано ---
           if (event.read) {
-            console.log(`\ud83d\udc41\ufe0f Read by ${senderId} at ${event.read.watermark}`);
+            console.log(`👁️ Read by ${senderId} at ${event.read.watermark}`);
           }
         }
       }
@@ -100,14 +212,13 @@ async function sendReply(recipientId, text) {
       }
     );
     const data = await response.json();
-
     if (data.error) {
-      console.error('\u274c Instagram API Error:', data.error.message);
+      console.error('❌ Instagram API Error:', data.error.message);
     } else {
-      console.log('\ud83d\udce4 Reply sent to:', recipientId);
+      console.log('📤 Reply sent to:', recipientId);
     }
   } catch (err) {
-    console.error('\u274c Instagram sendReply Error:', err.message);
+    console.error('❌ Instagram sendReply Error:', err.message);
   }
 }
 
@@ -117,7 +228,6 @@ async function sendReply(recipientId, text) {
 // ==========================================
 async function createAmoDeal(senderId, messageText, time) {
   try {
-    // Используем /api/v4/leads/complex — создаёт сделку + контакт за один запрос
     const payload = [
       {
         name: `Instagram DM — OrkenAI`,
@@ -141,13 +251,13 @@ async function createAmoDeal(senderId, messageText, time) {
           ],
           tags: [
             { name: "instagram" },
-            { name: "orkenai-bot" }
+            { name: "orkenai-bot" },
+            { name: "aldar-kose" }
           ]
         }
       }
     ];
 
-    // --- Создаём сделку с контактом ---
     const leadResponse = await fetch(`${AMO_BASE_URL}/api/v4/leads/complex`, {
       method: 'POST',
       headers: {
@@ -161,17 +271,16 @@ async function createAmoDeal(senderId, messageText, time) {
 
     if (leadResponse.ok) {
       const leadId = leadData[0]?.id;
-      console.log('\u2705 amoCRM — сделка создана, ID:', leadId);
+      console.log('✅ amoCRM — сделка создана, ID:', leadId);
 
-      // --- Добавляем примечание с текстом сообщения ---
       if (leadId) {
         await addNoteToLead(leadId, messageText, time);
       }
     } else {
-      console.error('\u274c amoCRM Lead Error:', JSON.stringify(leadData));
+      console.error('❌ amoCRM Lead Error:', JSON.stringify(leadData));
     }
   } catch (err) {
-    console.error('\u274c amoCRM createDeal Error:', err.message);
+    console.error('❌ amoCRM createDeal Error:', err.message);
   }
 }
 
@@ -185,7 +294,7 @@ async function addNoteToLead(leadId, messageText, time) {
       {
         note_type: "common",
         params: {
-          text: `\ud83d\udce9 Instagram DM (${time}):\n\n${messageText}`
+          text: `📩 Instagram DM (${time}):\n\n${messageText}`
         }
       }
     ];
@@ -203,12 +312,12 @@ async function addNoteToLead(leadId, messageText, time) {
     );
 
     if (noteResponse.ok) {
-      console.log('\ud83d\udcdd amoCRM — примечание добавлено к сделке', leadId);
+      console.log('📝 amoCRM — примечание добавлено к сделке', leadId);
     } else {
       const errData = await noteResponse.json();
-      console.error('\u274c amoCRM Note Error:', JSON.stringify(errData));
+      console.error('❌ amoCRM Note Error:', JSON.stringify(errData));
     }
   } catch (err) {
-    console.error('\u274c amoCRM addNote Error:', err.message);
+    console.error('❌ amoCRM addNote Error:', err.message);
   }
 }

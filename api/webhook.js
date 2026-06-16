@@ -362,8 +362,8 @@ export default async function handler(req, res) {
                 }
               } else {
                 const fallbacks = {
-                  kz: '🙏 Кешіріңіз, техникалық қиындық. Менеджер жақын арада жауап береді!',
-                  ru: '🙏 Извините, небольшие технические сложности. Менеджер ответит вам в ближайшее время!',
+                  kz: '🙏 Менеджер жақын арада жауап береді!',
+                  ru: '🙏 Менеджер ответит вам в ближайшее время!',
                   en: '🙏 Sorry, minor technical issue. Our manager will reply shortly!',
                   uz: "🙏 Uzr, texnik nosozlik. Menejer tez orada javob beradi!",
                   kg: '🙏 Кечиресиз, техникалык кыйынчылык. Менеджер жакында жооп берет!'
